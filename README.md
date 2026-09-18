@@ -108,15 +108,6 @@ src/ridgeflow/
 `Guidance` is a `Protocol`, so anything with a `heatmap(occupancy, start, goal, seed)` method
 can drive the controller.
 
-## Notes
-
-- Only the pocket layout is validated; multi-room layouts are outside this checkpoint's
-  training distribution.
-- The controller is greedy with a forward cone. It escapes a pocket because it can reverse,
-  but it has no global search and will not solve a maze.
-- `SimulationConfig.latency_s` fixes the inference delay the lookahead assumes, so runs are
-  reproducible from a seed; `None` uses the measured value instead.
-
 ## License
 
 MIT
