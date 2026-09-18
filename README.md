@@ -9,6 +9,13 @@ dynamic-window controller follows it while the obstacles move.
   coloured by score.</em>
 </p>
 
+The same controller and the same settings, against obstacles moving at 1x, 2x and 3x the
+robot's own speed:
+
+| obstacles at 1x | obstacles at 2x | obstacles at 3x |
+|---|---|---|
+| ![1x](assets/pocket_speed1.gif) | ![2x](assets/pocket_speed2.gif) | ![3x](assets/pocket_speed3.gif) |
+
 ## How it works
 
 Given an occupancy grid and two endpoints, the model samples a heatmap — a Gaussian ridge of
