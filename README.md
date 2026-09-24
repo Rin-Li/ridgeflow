@@ -16,30 +16,22 @@ The model takes an occupancy grid and two endpoints and returns a heatmap `H`: a
 of width σ<sub>H</sub> laid along a feasible route. It is trained with rectified flow on RRT*
 demonstrations and sampled in 4 steps.
 
-The walker explains `H` with Gaussian atoms, one step at a time, and uses up the ridge as it
-goes:
+The walker is a DWA whose objective is the ridge itself. It keeps a residual `R`, which starts
+as `H`. Each step it fans candidates `c` over the half-plane ahead, drops those whose segment
+hits an obstacle (the feasible set `F`), and moves to the candidate that explains the most
+remaining energy. It then subtracts its own footprint:
 
-$$
-\Phi_c(z)=\exp\!\Big(-\frac{\|z-c\|^2}{2\sigma_H^2}\Big),\qquad
-R_0=\big(H-a\,\Phi_{s}\big)_+
-$$
+```math
+x_{k+1} = \arg\max_{c \in F_k} \langle R_k, \Phi_c \rangle,
+\qquad
+R_{k+1} = \max\left(R_k - a\,\Phi_{x_{k+1}},\ 0\right),
+\qquad
+\Phi_c(z) = \exp\left(-\frac{\lVert z - c \rVert^2}{2\sigma_H^2}\right)
+```
 
-$$
-\mathcal{C}_k=\big\{x_k+\delta\,\mathrm{Rot}(\theta)\,u_k \;\big|\; \theta\in[-90^\circ,90^\circ]\big\},\qquad
-\mathcal{F}_k=\{c\in\mathcal{C}_k : \overline{x_k c}\ \text{is collision-free}\}
-$$
-
-$$
-x_{k+1}=\arg\max_{c\in\mathcal{F}_k}\ \langle R_k,\Phi_c\rangle,\qquad
-\boxed{R_{k+1}=\big(R_k-a\,\Phi_{x_{k+1}}\big)_+}
-$$
-
-Each step fans candidates over the half-plane ahead of the walker. Candidates whose segment
-hits an obstacle are dropped. The walker moves to the candidate that explains the most
-remaining energy, then subtracts its footprint. Ridge it has already walked stops attracting
-it, so the energy that is left ahead sets the direction. There is no goal term and nothing to
-oscillate back to. When the goal is within one step and the segment to it is free, the walker
-connects to the goal.
+Ridge the walker has already covered stops attracting it, so the energy left ahead sets the
+direction. There is no goal term and nothing to oscillate back to. Once the goal is within one
+step and the segment to it is free, the walker connects to the goal.
 
 <p align="center"><img src="assets/method.png" width="100%"></p>
 
