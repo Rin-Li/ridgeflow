@@ -65,9 +65,10 @@ planners avoid the same raster, padded by one cell.
 | RRT* (global search) | 99.2% | 1.00 |
 
 The walker is a local rule and never searches, but because it follows a global route it gets
-within five points of RRT*. The paths are about as long, with no sharp corners. Its failures
-come mostly from narrow gaps: every candidate ahead is blocked, and the ridge ran too close to
-a wall.
+within five points of RRT*. The paths are about as long, with no sharp corners. It fails in two
+ways, in roughly equal numbers. Either the sampled ridge is broken and the walker wanders once
+the energy runs out, or the ridge runs too close to a wall and every candidate ahead is
+blocked.
 
 <p align="center"><img src="assets/random.png" width="90%"></p>
 
