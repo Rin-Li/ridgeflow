@@ -2,14 +2,13 @@
 
 from ridgeflow.grid import GridSpec
 from ridgeflow.model import RidgeModel
-from ridgeflow.planners import DWA, RidgeWalker, RRTStar, WalkerConfig
+from ridgeflow.planners import DWA, RidgeWalker, WalkerConfig
 from ridgeflow.scenarios import SCENES, sample_rect_world
 from ridgeflow.world import Rect, World, stack
 
 __all__ = [
     "DWA",
     "GridSpec",
-    "RRTStar",
     "Rect",
     "RidgeModel",
     "RidgeWalker",

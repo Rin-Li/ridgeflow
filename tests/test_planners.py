@@ -5,7 +5,7 @@ import pytest
 import torch
 from conftest import ridge
 
-from ridgeflow import DWA, SCENES, GridSpec, Rect, RidgeWalker, RRTStar, WalkerConfig, World, stack
+from ridgeflow import DWA, SCENES, GridSpec, Rect, RidgeWalker, WalkerConfig, World, stack
 from ridgeflow.planners.dwa import clearance_field
 
 
@@ -84,9 +84,3 @@ def test_clearance_is_zero_on_walls_and_grows_away(grid: GridSpec) -> None:
     assert field[32, 32] == 0.0
     assert field[10, 32] > field[20, 32] > 0.0
 
-
-def test_rrt_star_finds_a_collision_free_path(grid: GridSpec) -> None:
-    world = World([Rect(3.5, 2.0, 1.0, 4.0)], np.array([1.0, 4.0]), np.array([7.0, 4.0]), grid)
-    path = RRTStar(world, rng=0).plan()
-    assert path is not None and world.path_free(path)
-    assert np.allclose(path[0], world.start) and np.allclose(path[-1], world.goal)

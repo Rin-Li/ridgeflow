@@ -1,8 +1,9 @@
 # RidgeFlow
 
-A flow-matching model paints a ridge over the map in one shot. A walker then traces it into a
-collision-free path. The walker does not use a goal term or cost weights, and none of its
-constants are tuned.
+**A DWA with nothing to tune.** A flow-matching model paints a ridge over the map in one shot.
+A dynamic-window walker then follows it. The walker has no goal term, no cost weights and no
+constants to tune. Because it follows a route drawn over the whole map, it gets out of dead
+ends that trap a classic DWA.
 
 <p align="center"><img src="assets/traps.png" width="100%"></p>
 
@@ -55,20 +56,20 @@ Every constant comes from the model or the grid:
 
 ## Random maps
 
-1000 maps drawn from the training distribution (7 to 10 boxes, straight line blocked). All
+1000 maps drawn from the training distribution (7 to 10 boxes, straight line blocked). Both
 planners avoid the same raster, padded by one cell.
 
-| method | success | path length / RRT* |
+| method | weights to tune | success |
 |---|---|---|
-| **ridge walker** | **94.6%** | 1.02 |
-| DWA (best of 60 settings) | 38.2% | 1.65 |
-| RRT* (global search) | 99.2% | 1.00 |
+| **ridge walker** | **none** | **94.6%** |
+| DWA, best of 60 settings | heading, clearance, speed, horizon | 38.2% |
 
-The walker is a local rule and never searches, but because it follows a global route it gets
-within five points of RRT*. The paths are about as long, with no sharp corners. It fails in two
-ways, in roughly equal numbers. Either the sampled ridge is broken and the walker wanders once
-the energy runs out, or the ridge runs too close to a wall and every candidate ahead is
-blocked.
+The walker's candidates, collision filter and argmax are those of a DWA. The only change is the
+objective: DWA scores the direction to the goal, clearance and speed, and the weights between
+them decide whether it works at all. The walker scores the ridge energy it would explain, and
+that energy already encodes a route around the obstacles. It fails in two ways, in roughly
+equal numbers. Either the sampled ridge is broken and the walker wanders once the energy runs
+out, or the ridge runs too close to a wall and every candidate ahead is blocked.
 
 <p align="center"><img src="assets/random.png" width="90%"></p>
 
