@@ -1,157 +1,84 @@
 from __future__ import annotations
 
 import numpy as np
-from scipy import ndimage
+import torch
+import torch.nn.functional as F
 
 from ridgeflow.grid import GridSpec
-from ridgeflow.world import Rect, World, any_overlap
-
-DENSITY_BANDS = {
-    "sparse": ((3, 5), (0.04, 0.10)),
-    "medium": ((6, 10), (0.10, 0.30)),
-    "dense": ((12, 20), (0.30, 0.42)),
-}
-
-EIGHT_CONNECTED = np.ones((3, 3), bool)
+from ridgeflow.world import Rect, World
 
 
-def _drifting_rect(rng, x: float, y: float, width: float, height: float, speed: float) -> Rect:
-    angle = rng.uniform(0.0, 2.0 * np.pi)
-    return Rect(x, y, width, height, speed * np.cos(angle), speed * np.sin(angle))
+def connected(world: World) -> bool:
+    """Eight-connected flood fill from start to goal over the free planning cells."""
+    free = ~world.planning_grid()
+    start, goal = world.grid.index(world.start), world.grid.index(world.goal)
+    reach = torch.zeros_like(free)
+    reach[start] = True
+    reach &= free
+    while True:
+        grown = (F.max_pool2d(reach.float()[None, None], 3, 1, 1)[0, 0] > 0.5) & free
+        if bool(grown[goal]):
+            return True
+        if torch.equal(grown, reach):
+            return False
+        reach = grown
 
 
-def _connected(world: World, a, b) -> bool:
-    labels, _ = ndimage.label(world.occupancy() <= 0.5, structure=EIGHT_CONNECTED)
-    ia, ib = world.grid.index(a), world.grid.index(b)
-    if not (world.grid.holds(ia) and world.grid.holds(ib)):
-        return False
-    return labels[ia] > 0 and labels[ia] == labels[ib]
+def _random_rects(rng, count: tuple[int, int], extent: float) -> list[Rect]:
+    rects: list[Rect] = []
+    for _ in range(int(rng.integers(count[0], count[1] + 1))):
+        for _ in range(100):
+            w, h = rng.uniform(0.5, 0.3 * extent, size=2)
+            rect = Rect(rng.uniform(0.0, extent - w), rng.uniform(0.0, extent - h), w, h)
+            if not any(rect.overlaps(other) for other in rects):
+                rects.append(rect)
+                break
+    return rects
 
 
-def sample_scattered_world(
-    rng,
-    grid: GridSpec | None = None,
-    density: str = "medium",
-    speed: float = 1.0,
-    min_span: float = 4.0,
-    tries: int = 400,
+def sample_rect_world(
+    rng, grid: GridSpec | None = None, rect_count: tuple[int, int] = (7, 10)
 ) -> World:
-    """Free-floating boxes at the density the generative model was trained on.
-
-    The straight line from start to goal is required to hit something, which is the
-    training generator's own criterion; without it most queries are solved by walking
-    at the goal and guidance has nothing to contribute.
-    """
+    """A query from the training distribution: 7-10 boxes, direct line blocked, solvable."""
     grid = grid or GridSpec()
-    count_band, occupancy_band = DENSITY_BANDS[density]
-    extent = grid.extent
-    for _ in range(tries):
-        rects: list[Rect] = []
-        for _ in range(int(rng.integers(count_band[0], count_band[1] + 1))):
-            for _ in range(100):
-                width, height = rng.uniform(0.5, 2.4, size=2)
-                candidate = _drifting_rect(
-                    rng,
-                    rng.uniform(0.0, extent - width),
-                    rng.uniform(0.0, extent - height),
-                    width,
-                    height,
-                    speed,
-                )
-                if not any_overlap(candidate, rects):
-                    rects.append(candidate)
-                    break
-        world = World(rects, np.zeros(2), np.zeros(2), grid)
-        if not occupancy_band[0] <= float(world.occupancy().mean()) <= occupancy_band[1]:
+    while True:
+        world = World(_random_rects(rng, rect_count, grid.extent), np.zeros(2), np.zeros(2), grid)
+        for _ in range(1000):
+            start, goal = rng.uniform(0.0, grid.extent, size=(2, 2))
+            if np.linalg.norm(goal - start) >= 1.0 and not (
+                world.blocked(start) or world.blocked(goal)
+            ):
+                break
+        else:
             continue
-        for _ in range(200):
-            start = rng.uniform(0.3, extent - 0.3, size=2)
-            goal = rng.uniform(0.3, extent - 0.3, size=2)
-            if np.linalg.norm(goal - start) < min_span:
-                continue
-            if world.blocked(start) or world.blocked(goal):
-                continue
-            if not world.segment_blocked(start, goal):
-                continue
-            world.start, world.goal = start, goal
+        world.start, world.goal = start, goal
+        if world.segment_blocked(start, goal) and connected(world):
             return world
-    raise RuntimeError("could not lay out a scattered world")
 
 
-def _span_box(a, b, thickness: float, extent: float) -> Rect:
-    low = np.clip(np.minimum(a, b) - thickness / 2.0, 0.0, extent)
-    high = np.clip(np.maximum(a, b) + thickness / 2.0, 0.0, extent)
-    return Rect(
-        float(low[0]),
-        float(low[1]),
-        float(max(high[0] - low[0], 0.2)),
-        float(max(high[1] - low[1], 0.2)),
-    )
+def _box(x0: float, y0: float, x1: float, y1: float) -> Rect:
+    return Rect(x0, y0, x1 - x0, y1 - y0)
 
 
-def _pocket_walls(
-    centre, mouth_direction, extent: float, arm: float = 1.9, width: float = 1.5,
-    thickness: float = 0.42,
-) -> list[Rect]:
-    """Three static boxes forming a U whose opening faces ``mouth_direction``."""
-    forward = np.asarray(mouth_direction, np.float64)
-    forward = forward / max(np.linalg.norm(forward), 1e-9)
-    normal = np.array([-forward[1], forward[0]])
-    back = np.asarray(centre, np.float64) - forward * arm / 2.0
-    walls = [_span_box(back - normal * width / 2.0, back + normal * width / 2.0, thickness, extent)]
-    for side in (-1.0, 1.0):
-        anchor = back + normal * side * width / 2.0
-        walls.append(_span_box(anchor, anchor + forward * arm, thickness, extent))
-    return walls
+def u_trap(grid: GridSpec | None = None) -> World:
+    rects = [_box(4.6, 2.2, 5.1, 5.8), _box(2.6, 2.2, 4.6, 2.7), _box(2.6, 5.3, 4.6, 5.8)]
+    return World(rects, np.array([1.0, 4.0]), np.array([7.0, 4.0]), grid or GridSpec())
 
 
-def sample_pocket_world(
-    rng,
-    grid: GridSpec | None = None,
-    movers: int = 4,
-    speed: float = 1.0,
-    min_span: float = 5.0,
-    tries: int = 300,
-) -> World:
-    """A U-shaped dead end straddling the direct line, plus drifting boxes.
+def corner_trap(grid: GridSpec | None = None) -> World:
+    rects = [
+        _box(3.6, 3.6, 5.0, 4.1), _box(4.5, 1.8, 5.0, 3.6), _box(3.6, 4.1, 4.1, 5.6),
+        _box(6.0, 0.6, 7.2, 1.8), _box(1.0, 6.0, 2.2, 7.2),
+    ]
+    return World(rects, np.array([1.5, 1.5]), np.array([6.5, 6.5]), grid or GridSpec())
 
-    Walking at the goal enters the pocket and has to reverse out of it, so the layout
-    separates a controller that follows a global route from one that follows the goal.
-    """
-    grid = grid or GridSpec()
-    extent = grid.extent
-    for _ in range(tries):
-        start = rng.uniform(0.4, extent - 0.4, size=2)
-        goal = rng.uniform(0.4, extent - 0.4, size=2)
-        span = float(np.linalg.norm(goal - start))
-        if span < min_span:
-            continue
-        direction = (goal - start) / span
-        centre = start + direction * span * rng.uniform(0.45, 0.62)
-        walls = _pocket_walls(centre, -direction, extent)
 
-        boxes: list[Rect] = []
-        for _ in range(movers):
-            for _ in range(80):
-                width, height = rng.uniform(0.5, 1.4, size=2)
-                candidate = _drifting_rect(
-                    rng,
-                    rng.uniform(0.0, extent - width),
-                    rng.uniform(0.0, extent - height),
-                    width,
-                    height,
-                    speed,
-                )
-                if not any_overlap(candidate, walls + boxes, pad=0.15):
-                    boxes.append(candidate)
-                    break
+def dead_end(grid: GridSpec | None = None) -> World:
+    rects = [
+        _box(2.8, 4.8, 5.2, 5.3), _box(2.8, 2.6, 3.3, 4.8), _box(4.7, 2.6, 5.2, 4.8),
+        _box(1.0, 1.0, 2.2, 2.0), _box(6.0, 6.0, 7.2, 7.2),
+    ]
+    return World(rects, np.array([4.0, 3.4]), np.array([4.0, 7.0]), grid or GridSpec())
 
-        world = World(walls + boxes, start, goal, grid)
-        if world.blocked(start) or world.blocked(goal):
-            continue
-        if not _connected(world, start, goal):
-            continue
-        if not 0.10 <= float(world.occupancy().mean()) <= 0.34:
-            continue
-        return world
-    raise RuntimeError("could not lay out a pocket world")
+
+SCENES = {"U-trap": u_trap, "corner trap": corner_trap, "dead-end start": dead_end}

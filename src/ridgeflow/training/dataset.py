@@ -7,17 +7,11 @@ import torch
 from torch.utils.data import Dataset
 
 from ridgeflow.grid import GridSpec
-from ridgeflow.targets import RIDGE_SIGMA, path_heatmap, world_to_pixel
+from ridgeflow.model.targets import RIDGE_SIGMA, path_heatmap, world_to_pixel
 
 
 class RidgeDataset(Dataset):
-    """Demonstration paths rendered as Gaussian ridges over their scene.
-
-    Expects a pickled ``dict`` with ``map``, ``start``, ``goal`` and ``paths``. Maps are
-    stored ``[x, y]`` and transposed here to the ``[y, x]`` raster the network uses. When
-    several queries share a scene the file carries one ``map_id`` per query instead of
-    repeating the map.
-    """
+    """A pickled dict of ``map``, ``start``, ``goal``, ``paths`` (optional ``map_id``)."""
 
     def __init__(
         self,

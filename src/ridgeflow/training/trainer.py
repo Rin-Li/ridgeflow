@@ -10,10 +10,10 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset, random_split
 
-from ridgeflow.flow import FlowMatching
 from ridgeflow.grid import GridSpec
-from ridgeflow.targets import ENDPOINT_SIGMA
-from ridgeflow.unet import build_unet
+from ridgeflow.model.flow import FlowMatching
+from ridgeflow.model.targets import ENDPOINT_SIGMA
+from ridgeflow.model.unet import build_unet
 
 
 @dataclass

@@ -4,13 +4,7 @@ import torch
 
 
 class FlowMatching:
-    """Rectified flow on the straight path ``x_t = (1 - t) x0 + t eps``.
-
-    ``t = 0`` is data and ``t = 1`` is noise, so the velocity the model regresses is the
-    constant ``eps - x0`` and sampling counts ``t`` down. ``time_scale`` maps ``t`` onto
-    the range the sinusoidal embedding expects and only has to agree between training
-    and sampling.
-    """
+    """Rectified flow on ``x_t = (1 - t) x0 + t eps``; the model regresses ``eps - x0``."""
 
     def __init__(self, time_scale: float = 1000.0, sigma_min: float = 0.0) -> None:
         self.time_scale = float(time_scale)
@@ -43,12 +37,7 @@ class FlowMatching:
         seed: int | None = None,
         clamp: bool = True,
     ) -> torch.Tensor:
-        """Euler integration from noise to data, optionally re-noising after each step.
-
-        ``eta`` mixes the deterministic Euler step with an ancestral one that predicts
-        ``x0 = x - t v`` and re-noises it to the next level. It is the escape route from
-        the between-modes region the averaged velocity points into at high ``t``.
-        """
+        """Euler steps from noise to data, re-noised by ``eta`` after each step."""
         shape = (obstacle.shape[0], 1, obstacle.shape[-2], obstacle.shape[-1])
         if seed is not None:
             torch.manual_seed(seed)

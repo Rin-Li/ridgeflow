@@ -10,7 +10,6 @@ ENDPOINT_SIGMA = 2.0
 
 
 def world_to_pixel(points, grid: GridSpec) -> np.ndarray:
-    """World coordinates to fractional pixel centres, clipped to the grid."""
     pixels = np.asarray(points, np.float32) / grid.cell - 0.5
     return np.clip(pixels, 0.0, grid.size - 1)
 
@@ -34,11 +33,7 @@ def point_heatmap(
 def path_heatmap(
     path_xy, size: int, sigma: float = RIDGE_SIGMA, chunk: int = 32, device="cpu"
 ) -> torch.Tensor:
-    """A Gaussian tube around the piecewise-linear path, measured to segments.
-
-    Distance is taken to every segment rather than to the stored waypoints, so the
-    target does not depend on how densely the planner sampled the path.
-    """
+    """A Gaussian tube of width ``sigma`` around the polyline, as ``(1, S, S)`` [y, x]."""
     points = torch.as_tensor(path_xy, dtype=torch.float32, device=device)
     if points.ndim != 2 or points.shape[-1] != 2:
         raise ValueError(f"expected a (L, 2) path, got {tuple(points.shape)}")
