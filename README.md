@@ -9,7 +9,6 @@ ends that trap a classic DWA.
 
 The same maps given to a classic DWA (red). DWA only knows the direction to the goal, so it
 drives into the pocket and circles there. The walker (green) follows the route the model drew.
-The count in each title is how many of 8 sampled ridges the walker completed.
 
 ## Method
 

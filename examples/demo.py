@@ -48,7 +48,7 @@ def main() -> None:
         shown = int(solved[0]) if len(solved) else 0
         panels.append(
             Panel(
-                f"{name}: walker {len(solved)}/{args.samples}",
+                name,
                 world,
                 heatmaps[shown],
                 walker=(ours.paths[shown], bool(ours.reached[shown])),
