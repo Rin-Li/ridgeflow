@@ -15,7 +15,7 @@ class DWAConfig:
     """A unicycle with the usual DWA cost: heading to goal, obstacle clearance, speed."""
 
     max_speed: float = 1.0
-    min_speed: float = 0.0
+    min_speed: float = -0.5
     max_yaw_rate: float = math.radians(120.0)
     max_accel: float = 2.0
     max_yaw_accel: float = math.radians(360.0)

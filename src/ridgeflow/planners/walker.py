@@ -16,8 +16,7 @@ ACTIVE, ARRIVED, STUCK = 0, 1, 2
 
 @dataclass(frozen=True)
 class WalkerConfig:
-    """Nothing is fitted: footprint = training ridge width, step = one cell, the cone only
-    forbids stepping backwards, and ``truncation`` is a numerical tolerance."""
+    """Nothing is fitted: see the constants table in the README."""
 
     step_px: float = 1.0
     cone_deg: float = 90.0

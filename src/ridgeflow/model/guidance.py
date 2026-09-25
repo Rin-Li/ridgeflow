@@ -6,7 +6,7 @@ import torch
 
 from ridgeflow.grid import GridSpec
 from ridgeflow.model.flow import FlowMatching
-from ridgeflow.model.targets import ENDPOINT_SIGMA
+from ridgeflow.model.targets import endpoint_heatmaps
 from ridgeflow.model.unet import build_unet
 
 
@@ -39,12 +39,8 @@ class RidgeModel:
         self.flow = FlowMatching(**state.get("flow_config", {}))
 
     def _endpoints(self, world_xy: torch.Tensor) -> torch.Tensor:
-        pixel = world_xy / self.grid.cell - 0.5
-        axis = torch.arange(self.grid.size, device=self.device, dtype=torch.float32)
-        yy, xx = torch.meshgrid(axis, axis, indexing="ij")
-        dx = xx[None] - pixel[:, 0, None, None]
-        dy = yy[None] - pixel[:, 1, None, None]
-        return torch.exp(-(dx**2 + dy**2) / (2.0 * ENDPOINT_SIGMA**2))[:, None]
+        pixels = world_xy.to(self.device) / self.grid.cell - 0.5
+        return endpoint_heatmaps(pixels, self.grid.size)
 
     @torch.no_grad()
     def sample(
@@ -55,8 +51,8 @@ class RidgeModel:
         sampled = self.flow.sample(
             self.model,
             obstacle,
-            self._endpoints(starts.to(self.device)),
-            self._endpoints(goals.to(self.device)),
+            self._endpoints(starts),
+            self._endpoints(goals),
             steps=self.steps,
             eta=self.eta,
             seed=seed,

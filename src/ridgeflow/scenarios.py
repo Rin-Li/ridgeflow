@@ -65,12 +65,12 @@ def u_trap(grid: GridSpec | None = None) -> World:
     return World(rects, np.array([1.0, 4.0]), np.array([7.0, 4.0]), grid or GridSpec())
 
 
-def corner_trap(grid: GridSpec | None = None) -> World:
+def comb(grid: GridSpec | None = None) -> World:
     rects = [
-        _box(3.6, 3.6, 5.0, 4.1), _box(4.5, 1.8, 5.0, 3.6), _box(3.6, 4.1, 4.1, 5.6),
-        _box(6.0, 0.6, 7.2, 1.8), _box(1.0, 6.0, 2.2, 7.2),
+        _box(4.8, 1.2, 5.3, 6.8), _box(3.0, 1.2, 4.8, 1.7),
+        _box(3.0, 3.75, 4.8, 4.25), _box(3.0, 6.3, 4.8, 6.8),
     ]
-    return World(rects, np.array([1.5, 1.5]), np.array([6.5, 6.5]), grid or GridSpec())
+    return World(rects, np.array([1.2, 3.0]), np.array([7.0, 3.0]), grid or GridSpec())
 
 
 def dead_end(grid: GridSpec | None = None) -> World:
@@ -81,4 +81,4 @@ def dead_end(grid: GridSpec | None = None) -> World:
     return World(rects, np.array([4.0, 3.4]), np.array([4.0, 7.0]), grid or GridSpec())
 
 
-SCENES = {"U-trap": u_trap, "corner trap": corner_trap, "dead-end start": dead_end}
+SCENES = {"U-trap": u_trap, "comb": comb, "dead-end start": dead_end}

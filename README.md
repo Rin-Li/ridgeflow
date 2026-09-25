@@ -7,8 +7,8 @@ ends that trap a classic DWA.
 
 <p align="center"><img src="assets/traps.png" width="100%"></p>
 
-The same maps given to a classic DWA (red). DWA only knows the direction to the goal, so it
-drives into the pocket and circles there. The walker (green) follows the route the model drew.
+The same maps given to a classic DWA (red), which may also reverse. DWA only knows the
+direction to the goal, so it drives into the pocket and circles there. The walker (green) follows the route the model drew.
 
 ## Method
 
@@ -53,7 +53,7 @@ planners avoid the same raster, padded by one cell.
 | method | weights to tune | success |
 |---|---|---|
 | **ridge walker** | **none** | **94.6%** |
-| DWA, best of 60 settings | heading, clearance, speed, horizon | 38.2% |
+| DWA, best of 60 settings | heading, clearance, speed, horizon | 43.2% |
 
 The walker's candidates, collision filter and argmax are those of a DWA. The only change is the
 objective: DWA scores the direction to the goal, clearance and speed, and the weights between
@@ -64,8 +64,9 @@ out, or the ridge runs too close to a wall and every candidate ahead is blocked.
 
 <p align="center"><img src="assets/random.png" width="90%"></p>
 
-DWA's result depends heavily on its weights. We searched 60 settings on 100 held-out maps and
-the benchmark uses the best one. A selection:
+The DWA baseline follows PythonRobotics and may reverse at up to half its top speed. Its result
+depends heavily on its weights. We searched 60 settings on 100 held-out maps, without
+reversing, and the benchmark uses the best one. A selection:
 
 | heading | clearance | speed | horizon | success |
 |---|---|---|---|---|

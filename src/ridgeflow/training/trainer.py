@@ -12,13 +12,13 @@ from torch.utils.data import DataLoader, Dataset, random_split
 
 from ridgeflow.grid import GridSpec
 from ridgeflow.model.flow import FlowMatching
-from ridgeflow.model.targets import ENDPOINT_SIGMA
+from ridgeflow.model.targets import ENDPOINT_SIGMA, endpoint_heatmaps
 from ridgeflow.model.unet import build_unet
 
 
 @dataclass
 class TrainConfig:
-    """Everything the run needs; the defaults reproduce the shipped checkpoint."""
+    """The defaults reproduce the shipped checkpoint."""
 
     output_dir: Path = Path("checkpoints/run")
     epochs: int = 300
@@ -59,26 +59,6 @@ def _warmup_cosine(total: int, warmup: int):
     return schedule
 
 
-class _EndpointRenderer:
-    """Batched endpoint Gaussians, built once per device and resolution."""
-
-    def __init__(self, size: int, sigma: float, device) -> None:
-        axis = torch.arange(size, device=device, dtype=torch.float32)
-        yy, xx = torch.meshgrid(axis, axis, indexing="ij")
-        self.xx = xx[None, None]
-        self.yy = yy[None, None]
-        self.sigma = float(sigma)
-        self.device = device
-
-    def __call__(self, pixels: torch.Tensor) -> torch.Tensor:
-        pixels = pixels.to(self.device, non_blocking=True)
-        x0 = pixels[:, 0, None, None, None]
-        y0 = pixels[:, 1, None, None, None]
-        return torch.exp(
-            -((self.xx - x0).square() + (self.yy - y0).square()) / (2.0 * self.sigma**2)
-        )
-
-
 def _split(dataset: Dataset, val_ratio: float, seed: int):
     if val_ratio <= 0.0:
         return dataset, None
@@ -94,7 +74,6 @@ def train(
     grid: GridSpec | None = None,
     device: str = "cuda",
 ) -> Path:
-    """Regress the straight-path velocity and checkpoint the best validation epoch."""
     config = config or TrainConfig()
     grid = grid or GridSpec()
     torch.manual_seed(config.seed)
@@ -128,7 +107,6 @@ def train(
         parameter.requires_grad_(False)
 
     flow = FlowMatching(time_scale=config.time_scale, sigma_min=config.sigma_min)
-    endpoints = _EndpointRenderer(grid.size, config.endpoint_sigma, device)
     optimiser = torch.optim.AdamW(
         model.parameters(), lr=config.lr, weight_decay=config.weight_decay
     )
@@ -142,8 +120,8 @@ def train(
     def batch_loss(batch: dict) -> torch.Tensor:
         obstacle = batch["obstacle"].to(device, non_blocking=True)
         x0 = batch["target"].to(device, non_blocking=True)
-        start = endpoints(batch["start_pixel"])
-        goal = endpoints(batch["goal_pixel"])
+        start = endpoint_heatmaps(batch["start_pixel"].to(device), grid.size, config.endpoint_sigma)
+        goal = endpoint_heatmaps(batch["goal_pixel"].to(device), grid.size, config.endpoint_sigma)
         noise = torch.randn_like(x0)
         t = flow.sample_t(x0.shape[0], device, config.t_mode)
         x_t, velocity = flow.interpolate(x0, noise, t)

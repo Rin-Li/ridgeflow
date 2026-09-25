@@ -20,14 +20,12 @@ def _mesh(size: int, device) -> tuple[torch.Tensor, torch.Tensor]:
     return xx, yy
 
 
-def point_heatmap(
-    pixel_xy, size: int, sigma: float = ENDPOINT_SIGMA, device="cpu"
-) -> torch.Tensor:
-    """A single Gaussian blob as a ``(1, size, size)`` raster indexed ``[y, x]``."""
-    point = torch.as_tensor(pixel_xy, dtype=torch.float32, device=device)
-    xx, yy = _mesh(size, device)
-    field = torch.exp(-((xx - point[0]) ** 2 + (yy - point[1]) ** 2) / (2.0 * sigma**2))
-    return field.unsqueeze(0)
+def endpoint_heatmaps(pixels: torch.Tensor, size: int, sigma: float = ENDPOINT_SIGMA):
+    """``(B, 2)`` pixel positions -> ``(B, 1, S, S)`` Gaussian blobs indexed ``[y, x]``."""
+    xx, yy = _mesh(size, pixels.device)
+    dx = xx - pixels[:, 0, None, None]
+    dy = yy - pixels[:, 1, None, None]
+    return torch.exp(-(dx**2 + dy**2) / (2.0 * sigma**2))[:, None]
 
 
 def path_heatmap(
@@ -40,7 +38,7 @@ def path_heatmap(
     if len(points) == 0:
         return torch.zeros((1, size, size), dtype=torch.float32, device=device)
     if len(points) == 1:
-        return point_heatmap(points[0], size, sigma, device)
+        return endpoint_heatmaps(points, size, sigma)[0]
 
     xx, yy = _mesh(size, device)
     nearest = torch.full((size, size), float("inf"), dtype=torch.float32, device=device)

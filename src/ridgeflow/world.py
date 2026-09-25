@@ -28,11 +28,7 @@ class Rect:
 
 @dataclass
 class World:
-    """Rectangles, a start and a goal.
-
-    ``occupancy`` is the raster the model sees (cell centres inside a rectangle).
-    ``planning_grid`` grows it by ``padding_px`` cells and is what every planner avoids.
-    """
+    """``occupancy`` is what the model sees; planners avoid it padded by ``padding_px``."""
 
     rects: list[Rect]
     start: np.ndarray
@@ -77,7 +73,6 @@ class World:
 
 
 def stack(worlds: list[World], device) -> tuple[torch.Tensor, ...]:
-    """Occupancy, planning grids, starts and goals as batched tensors on ``device``."""
     occupancy = torch.stack([w.occupancy() for w in worlds]).to(device)
     grids = torch.stack([w.planning_grid() for w in worlds]).to(device)
     starts = torch.tensor(np.stack([w.start for w in worlds]), dtype=torch.float32, device=device)
