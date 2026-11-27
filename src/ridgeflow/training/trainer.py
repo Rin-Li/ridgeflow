@@ -14,6 +14,7 @@ from ridgeflow.grid import GridSpec
 from ridgeflow.model.flow import FlowMatching
 from ridgeflow.model.targets import ENDPOINT_SIGMA, endpoint_heatmaps
 from ridgeflow.model.unet import build_unet
+from ridgeflow.training.gap import gap_loss
 
 
 @dataclass
@@ -38,6 +39,7 @@ class TrainConfig:
     time_scale: float = 1000.0
     sigma_min: float = 0.0
     t_mode: str = "uniform"
+    gap_weight: float = 0.0  # weight of the gap loss (training.gap); 0 turns it off
     model: dict = field(
         default_factory=lambda: {
             "in_channels": 4,
@@ -117,16 +119,25 @@ def train(
     use_amp = config.amp and device.type == "cuda"
     scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
 
-    def batch_loss(batch: dict) -> torch.Tensor:
+    def batch_loss(batch: dict) -> tuple[torch.Tensor, float, float]:
+        """Total loss, flow MSE and the mean gap size (cells) of the x0 estimate."""
         obstacle = batch["obstacle"].to(device, non_blocking=True)
         x0 = batch["target"].to(device, non_blocking=True)
-        start = endpoint_heatmaps(batch["start_pixel"].to(device), grid.size, config.endpoint_sigma)
-        goal = endpoint_heatmaps(batch["goal_pixel"].to(device), grid.size, config.endpoint_sigma)
+        start_pixel = batch["start_pixel"].to(device)
+        goal_pixel = batch["goal_pixel"].to(device)
+        start = endpoint_heatmaps(start_pixel, grid.size, config.endpoint_sigma)
+        goal = endpoint_heatmaps(goal_pixel, grid.size, config.endpoint_sigma)
         noise = torch.randn_like(x0)
         t = flow.sample_t(x0.shape[0], device, config.t_mode)
         x_t, velocity = flow.interpolate(x0, noise, t)
         with torch.amp.autocast("cuda", enabled=use_amp):
-            return F.mse_loss(model(x_t, obstacle, start, goal, t * flow.time_scale), velocity)
+            predicted = model(x_t, obstacle, start, goal, t * flow.time_scale)
+        mse = F.mse_loss(predicted.float(), velocity)
+        if config.gap_weight <= 0.0:
+            return mse, mse.item(), 0.0
+        x0_hat = x_t - t.view(-1, 1, 1, 1) * predicted.float()
+        gap, cells = gap_loss(x0_hat, obstacle, start_pixel, goal_pixel, 1.0 - t)
+        return mse + config.gap_weight * gap, mse.item(), cells.item()
 
     output_dir = Path(config.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -138,11 +149,12 @@ def train(
     for epoch in range(1, config.epochs + 1):
         model.train()
         optimiser.zero_grad(set_to_none=True)
-        running = 0.0
+        running = gaps = 0.0
         for index, batch in enumerate(loaders["train"]):
-            loss = batch_loss(batch) / config.grad_accum_steps
-            scaler.scale(loss).backward()
-            running += loss.item() * config.grad_accum_steps
+            loss, mse, cells = batch_loss(batch)
+            scaler.scale(loss / config.grad_accum_steps).backward()
+            running += mse
+            gaps += cells
             if (index + 1) % config.grad_accum_steps:
                 continue
             scaler.step(optimiser)
@@ -157,11 +169,13 @@ def train(
 
         train_loss = running / max(len(loaders["train"]), 1)
         message = f"epoch {epoch:3d}  train {train_loss:.6f}"
+        if config.gap_weight > 0.0:
+            message += f"  gap {gaps / max(len(loaders['train']), 1):.2f} cells"
 
         if "val" in loaders and epoch % config.val_every == 0:
             model.eval()
             with torch.no_grad():
-                val_loss = sum(batch_loss(b).item() for b in loaders["val"]) / len(loaders["val"])
+                val_loss = sum(batch_loss(b)[1] for b in loaders["val"]) / len(loaders["val"])
             message += f"  val {val_loss:.6f}"
             if val_loss < best_loss:
                 best_loss = val_loss

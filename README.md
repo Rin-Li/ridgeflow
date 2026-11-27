@@ -14,7 +14,16 @@ direction to the goal, so it drives into the pocket and circles there. The walke
 
 The model takes an occupancy grid and two endpoints and returns a heatmap `H`: a Gaussian ridge
 of width σ<sub>H</sub> laid along a feasible route. It is trained with rectified flow on RRT*
-demonstrations and sampled in 4 steps.
+demonstrations and sampled in 4 steps. Training adds three things to the flow loss:
+
+- **Geodesic targets** (`--geodesic-target`): the ridge's distance to the demonstration is
+  measured through free cells only, so a ridge never leaks through a thin wall.
+- **Gap loss** (`--gap-weight 100`): on the one-step estimate of the clean heatmap, find the
+  cheapest start-goal route under `1 - log H` and lift the cells of that route where `H < 0.5`,
+  weighted by `1 - t`. The route is the sample's own, so the loss closes breaks without pulling
+  samples towards the demonstration's homotopy class (`ridgeflow/training/gap.py`).
+- **Symmetry augmentation** (`--augment`): one of the 8 rotations and reflections of the square
+  per query, applied to the map, the endpoints and the target alike.
 
 The walker is a DWA whose objective is the ridge itself. It keeps a residual `R`, which starts
 as `H`. Each step it fans candidates `c` over the half-plane ahead, drops those whose segment
@@ -84,4 +93,5 @@ reversing, and the benchmark uses the best one. A selection:
 pip install -e .
 python examples/demo.py       # the figures above
 python examples/benchmark.py  # the table above
+python examples/train.py --dataset DATA.npy --geodesic-target --gap-weight 100 --augment
 ```

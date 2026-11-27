@@ -1,4 +1,5 @@
 """Train the ridge model with rectified flow matching."""
+
 from __future__ import annotations
 
 import argparse
@@ -21,11 +22,31 @@ def main() -> None:
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--base-channels", type=int, default=64)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument(
+        "--gap-weight", type=float, default=0.0, help="gap loss weight (100 in the paper; 0: off)"
+    )
+    parser.add_argument(
+        "--geodesic-target",
+        action="store_true",
+        help="ridge distance measured in free space (no leaking through walls)",
+    )
+    parser.add_argument(
+        "--augment", action="store_true", help="random symmetry of the square per query"
+    )
+    parser.add_argument("--warmup-steps", type=int, default=100)
+    parser.add_argument("--ridge-sigma", type=float, default=1.5, help="0: binary raster target")
+    parser.add_argument("--seed", type=int, default=0, help="init, noise, shuffling, augmentation")
     args = parser.parse_args()
 
     grid = GridSpec(size=args.grid_size, extent=args.extent)
-    dataset = RidgeDataset(args.dataset, grid)
-    val_dataset = RidgeDataset(args.val_dataset, grid) if args.val_dataset else None
+    dataset = RidgeDataset(
+        args.dataset, grid, args.ridge_sigma, args.geodesic_target, augment=args.augment
+    )
+    val_dataset = (
+        RidgeDataset(args.val_dataset, grid, args.ridge_sigma, args.geodesic_target)
+        if args.val_dataset
+        else None
+    )
 
     config = TrainConfig(
         output_dir=Path(args.output_dir),
@@ -33,6 +54,9 @@ def main() -> None:
         batch_size=args.batch_size,
         grad_accum_steps=args.grad_accum_steps,
         lr=args.lr,
+        gap_weight=args.gap_weight,
+        warmup_steps=args.warmup_steps,
+        seed=args.seed,
     )
     config.model["base_channels"] = args.base_channels
 
