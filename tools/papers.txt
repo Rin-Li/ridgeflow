@@ -1,0 +1,38 @@
+# arXiv id    group        short name            (lines starting with # are ignored)
+# --- topology / connectivity losses
+2003.07311    loss         clDice
+2404.03010    loss         Skeleton Recall
+1906.05404    loss         TopoLoss (Hu et al.)
+2211.15272    loss         Betti Matching
+2112.07812    loss         Homotopy Warping
+2009.07011    loss         Region Separation (Oner)
+0911.5372     loss         MALIS
+1912.02175    loss         Blackbox combinatorial solvers
+# --- learned heatmap / cost + search
+2009.07476    search       Neural A*
+2212.11730    search       TransPath
+2012.03490    search       GAN heuristics for RRT*
+1709.05448    search       Learning sampling distributions (Ichter)
+1907.06013    search       MPNet
+# --- diffusion / flow planners, guidance, repair
+2205.09991    diffusion    Diffuser
+2308.01557    diffusion    Motion Planning Diffusion
+2309.11414    diffusion    EDMP
+2310.07842    diffusion    DiPPeR
+2310.12609    diffusion    Heat diffusion with insulators
+2407.06169    diffusion    Potential-based diffusion planning
+2402.03559    diffusion    Projected diffusion models
+2306.00148    diffusion    SafeDiffuser
+2310.19427    diffusion    Restoration Gap Guidance
+2410.16646    diffusion    TopoDiffusionNet
+# --- sampling-time guidance frameworks
+2209.14687    guidance     Diffusion Posterior Sampling (DPS)
+2306.17775    guidance     Twisted Diffusion Sampler (SMC)
+2201.09865    guidance     RePaint
+2302.07121    guidance     Universal Guidance
+# --- fields / multi-head outputs
+1602.02867    field        Value Iteration Networks
+2210.00120    field        NTFields
+2007.09547    field        Sat2Graph
+# --- global structure in diffusion image generation
+2310.07702    global       ScaleCrafter (re-dilation)
