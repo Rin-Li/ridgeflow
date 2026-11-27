@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
 import matplotlib
@@ -17,9 +16,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
-
-sys.path.insert(0, str(Path(__file__).parent))
-import topology_report  # noqa: E402,F401  (registers the CJK font)
 
 GREY, ORANGE, BLUE = "#9a9a9a", "#ff8c1a", "#3366cc"
 
@@ -108,7 +104,8 @@ def tmp64_sigma(pdf, rows):
     fig, axes = plt.subplots(1, 3, figsize=(11.69, 8.27))
     fig.suptitle(
         "TMP64 σ sweep (full recipe, 300 epochs from scratch; σ0 = no geodesic target)",
-        fontsize=13, weight="bold",
+        fontsize=13,
+        weight="bold",
     )
     for mode, colour in (("K1", ORANGE), ("best-of-8", BLUE)):
         rs = sorted((r for r in rows if r["mode"] == mode), key=lambda r: sig(r["model"]))
@@ -146,8 +143,9 @@ def tmp64_sigma(pdf, rows):
 def rrt(pdf, rows):
     names = [r["model"] for r in rows]
     fig = plt.figure(figsize=(11.69, 8.27))
-    fig.suptitle("RRT (continuous) component ablation: 1000 maps × 4 draws",
-                 fontsize=13, weight="bold")
+    fig.suptitle(
+        "RRT (continuous) component ablation: 1000 maps × 4 draws", fontsize=13, weight="bold"
+    )
     specs = [
         ("connected", "Single-draw connectivity %", "{:.1f}"),
         ("raw_dfs", "No projection, backtracking walker succ. %", "{:.1f}"),
@@ -198,8 +196,11 @@ def rrt(pdf, rows):
         ("Projection + backtracking walker", r["proj_dfs"]),
     ]
     fig, ax = plt.subplots(figsize=(11.69, 6))
-    fig.suptitle(f"RRT inference-pipeline ablation ({r['model']} model): success rate %",
-                 fontsize=13, weight="bold")
+    fig.suptitle(
+        f"RRT inference-pipeline ablation ({r['model']} model): success rate %",
+        fontsize=13,
+        weight="bold",
+    )
     bars(ax, [s for s, _ in steps], [v for _, v in steps], "", "{:.2f}", highlight=len(steps) - 1)
     ax.text(
         0.01,

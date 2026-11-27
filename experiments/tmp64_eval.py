@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time
 from multiprocessing import Pool
 from pathlib import Path
@@ -29,48 +28,21 @@ import numpy as np
 import torch
 from matplotlib.backends.backend_pdf import PdfPages
 
-sys.path.insert(0, str(Path(__file__).parent))
-from sampler_ablation import VARIANTS, sample  # noqa: E402
+from experiments.common import (
+    BY_NAME,
+    PLAIN,
+    TMP64_DATA,
+    astar_baseline,
+    draw_search,
+    search,
+    tmp64_heatmaps,
+    tmp64_queries,
+)
+from ridgeflow import GridSpec, RidgeModel
+from ridgeflow.routes import ON_RIDGE
+from ridgeflow.search import focal
 
-from ridgeflow import GridSpec, RidgeModel  # noqa: E402
-from ridgeflow.routes import ON_RIDGE, bottleneck  # noqa: E402
-from ridgeflow.search import astar, focal  # noqa: E402
-
-PLAIN = next(v for v in VARIANTS if v.name == "plain")
-RECUR = next(v for v in VARIANTS if v.name == "plain_r2")
-
-
-def _search(args):
-    blocked, start, goal, guide, w = args
-    if guide is None:
-        r = astar(blocked, start, goal)
-    else:
-        r = focal(blocked, start, goal, guide, w)
-    return r.expanded, r.cost
-
-
-def heatmaps(model, data, idx, seed, variant, draws):
-    """``draws`` samples per query in one batch; returns (Q, draws, S, S) and b*."""
-    grid = model.grid
-    occ = torch.from_numpy(data["map"][data["map_id"][idx]]).bool().to(model.device)
-    starts = torch.from_numpy(data["start"][idx]).to(model.device)
-    goals = torch.from_numpy(data["goal"][idx]).to(model.device)
-    si = torch.from_numpy(data["start_cell"][idx]).to(model.device)
-    gi = torch.from_numpy(data["goal_cell"][idx]).to(model.device)
-    q = len(idx)
-    rep = lambda t: t.repeat_interleave(draws, 0)  # noqa: E731
-    occ_r, st_r, go_r, si_r, gi_r = rep(occ), rep(starts), rep(goals), rep(si), rep(gi)
-    hs, bs, walls = [], [], []
-    for c in range(0, len(occ_r), 256):  # chunks keep best-of-M within memory
-        sl = slice(c, c + 256)
-        h, _, _ = sample(model, occ_r[sl], occ_r[sl], st_r[sl], go_r[sl], seed + c, variant)
-        hs.append(h)
-        bs.append(bottleneck(h, ~occ_r[sl], si_r[sl], gi_r[sl]))
-        walls.append(bottleneck(h, torch.ones_like(occ_r[sl]), si_r[sl], gi_r[sl]))
-    h, b = torch.cat(hs), torch.cat(bs)
-    heatmaps.through_walls = torch.cat(walls).view(q, draws)  # connected if walls are ignored
-    s = grid.size
-    return h.view(q, draws, s, s), b.view(q, draws)
+RECUR = BY_NAME["plain_r2"]
 
 
 def main() -> None:
@@ -78,7 +50,7 @@ def main() -> None:
         description=__doc__, formatter_class=argparse.RawTextHelpFormatter
     )
     parser.add_argument("checkpoints", nargs="+", help="name=path")
-    parser.add_argument("--data", default="outputs/data/tmp64_test.npy")
+    parser.add_argument("--data", default=TMP64_DATA)
     parser.add_argument("--seeds", type=int, default=3)
     parser.add_argument("--batch", type=int, default=128)
     parser.add_argument("--w", type=float, default=2.0)
@@ -88,14 +60,10 @@ def main() -> None:
     args = parser.parse_args()
 
     data = np.load(args.data, allow_pickle=True).item()
-    n = len(data["start"]) if args.queries == 0 else args.queries
-    blocked = [data["map"][data["map_id"][i]].astype(bool) for i in range(n)]
-    sc = [tuple(c) for c in data["start_cell"][:n]]
-    gc = [tuple(c) for c in data["goal_cell"][:n]]
+    blocked, sc, gc = tmp64_queries(data, args.queries)
+    n = len(blocked)
     pool = Pool(20)
-    base = pool.map(_search, [(blocked[i], sc[i], gc[i], None, 1.0) for i in range(n)])
-    a_exp = np.array([e for e, _ in base], float)
-    a_cost = np.array([c for _, c in base])
+    a_exp, a_cost = astar_baseline(pool, blocked, sc, gc)
     print(f"A*: mean expansions {a_exp.mean():.0f}", flush=True)
 
     modes = [("K1", PLAIN, 1), ("best-of-4", PLAIN, 4), ("best-of-8", PLAIN, 8), ("r2", RECUR, 1)]
@@ -111,17 +79,19 @@ def main() -> None:
                     idx = np.arange(begin, min(begin + args.batch, n))
                     torch.cuda.synchronize()
                     t1 = time.perf_counter()
-                    h, b = heatmaps(model, data, idx, 1000 * seed + begin, variant, draws)
+                    h, b, walls = tmp64_heatmaps(
+                        model, data, idx, 1000 * seed + begin, variant, draws
+                    )
                     pick = b.argmax(1)
                     rows_ = torch.arange(len(idx), device=h.device)
                     hp, bp = h[rows_, pick], b[rows_, pick]
-                    bw = heatmaps.through_walls[rows_, pick]
+                    bw = walls[rows_, pick]
                     cross += ((bp < ON_RIDGE) & (bw >= ON_RIDGE)).tolist()
                     torch.cuda.synchronize()
                     gen += time.perf_counter() - t1
                     hn = hp.cpu().numpy()
                     res = pool.map(
-                        _search,
+                        search,
                         [(blocked[i], sc[i], gc[i], hn[k], args.w) for k, i in enumerate(idx)],
                     )
                     ok = (bp >= ON_RIDGE).cpu().numpy()
@@ -168,8 +138,12 @@ def main() -> None:
     with PdfPages(out) as pdf:
         fig = plt.figure(figsize=(11.69, 8.27))
         fig.text(
-            0.5, 0.95, "TMP64: heatmap connectivity and FOCAL expansion",
-            ha="center", fontsize=16, weight="bold",
+            0.5,
+            0.95,
+            "TMP64: heatmap connectivity and FOCAL expansion",
+            ha="center",
+            fontsize=16,
+            weight="bold",
         )
         lines = [
             f"{n} test queries × {args.seeds} seeds; FOCAL w={args.w}, "
@@ -235,17 +209,8 @@ def main() -> None:
             for ax, i in zip(axes.ravel(), broken[p : p + 6], strict=False):
                 h, _, r = keep[(first, i)]
                 res = focal(blocked[i], sc[i], gc[i], h, args.w, keep_closed=True)
-                img = np.zeros((64, 64, 3))
-                img[...] = np.clip(h, 0, 1)[..., None] * np.array([1.0, 0.55, 0.1])
-                for cx, cy in res.closed:
-                    img[cx, cy] = 0.6 * img[cx, cy] + 0.4 * np.array([0.4, 0.75, 1.0])
-                img[blocked[i]] = 0.35
-                ax.imshow(img.transpose(1, 0, 2), origin="lower")
-                ax.plot(*sc[i], "o", color="white", mec="k", ms=7)
-                ax.plot(*gc[i], "*", color="cyan", mec="k", ms=12)
-                ax.set_xticks([])
-                ax.set_yticks([])
-                ax.set_title(f"#{i}  expansion cut {r:.0f}%", fontsize=9)
+                title = f"#{i}  expansion cut {r:.0f}%"
+                draw_search(ax, blocked[i], sc[i], gc[i], h, res.closed, None, title)
             for ax in axes.ravel()[len(broken[p : p + 6]) :]:
                 ax.axis("off")
             fig.tight_layout(rect=(0, 0, 1, 0.95))

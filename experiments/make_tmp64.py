@@ -17,9 +17,10 @@ from pathlib import Path
 
 import numpy as np
 
+from ridgeflow import GridSpec
 from ridgeflow.search import astar, distances_from
 
-CELL = 0.125
+CELL = GridSpec().cell  # 8 m over 64 cells
 SPLITS = {"train": 8140, "val": 1000, "test": 1044}
 
 

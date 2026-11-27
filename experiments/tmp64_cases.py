@@ -8,7 +8,6 @@ Each panel shows the heatmap, the cells FOCAL expanded and the returned path.
 from __future__ import annotations
 
 import argparse
-import sys
 from multiprocessing import Pool
 from pathlib import Path
 
@@ -19,13 +18,17 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
 
-sys.path.insert(0, str(Path(__file__).parent))
-import topology_report  # noqa: E402,F401  (registers the CJK font)
-from tmp64_eval import PLAIN, heatmaps  # noqa: E402
-
-from ridgeflow import GridSpec, RidgeModel  # noqa: E402
-from ridgeflow.routes import ON_RIDGE  # noqa: E402
-from ridgeflow.search import astar, focal  # noqa: E402
+from experiments.common import (
+    PLAIN,
+    TMP64_CHECKPOINT,
+    TMP64_DATA,
+    draw_search,
+    tmp64_heatmaps,
+    tmp64_queries,
+)
+from ridgeflow import GridSpec, RidgeModel
+from ridgeflow.routes import ON_RIDGE
+from ridgeflow.search import astar, focal
 
 
 def _run(args):
@@ -35,37 +38,19 @@ def _run(args):
     return a.expanded, a.cost, f.expanded, f.cost, f.closed, f.path
 
 
-def draw(ax, blocked, s, g, h, res, title):
-    _, _, _, _, closed, path = res
-    img = np.clip(h, 0, 1)[..., None] * np.array([1.0, 0.55, 0.1])
-    for cx, cy in closed:
-        img[cx, cy] = 0.55 * img[cx, cy] + 0.45 * np.array([0.35, 0.7, 1.0])
-    img[blocked] = 0.4
-    ax.imshow(img.transpose(1, 0, 2), origin="lower", interpolation="nearest")
-    if path is not None:
-        ax.plot(path[:, 0], path[:, 1], "-", color="#00e68a", lw=1.6)
-    ax.plot(*s, "o", color="white", mec="k", ms=6)
-    ax.plot(*g, "*", color="cyan", mec="k", ms=11)
-    ax.set_xticks([])
-    ax.set_yticks([])
-    ax.set_title(title, fontsize=8)
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", default="σ1.5+gap=outputs/runs/tmp_s15_gap100/best.pt")
+    parser.add_argument("--model", default=f"full={TMP64_CHECKPOINT}")
     parser.add_argument("--reference", default="σ1.5=outputs/runs/tmp_s15/best.pt")
-    parser.add_argument("--data", default="outputs/data/tmp64_test.npy")
+    parser.add_argument("--data", default=TMP64_DATA)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--w", type=float, default=2.0)
     parser.add_argument("--output", default="outputs/tmp64_cases.pdf")
     args = parser.parse_args()
 
     data = np.load(args.data, allow_pickle=True).item()
-    n = len(data["start"])
-    blocked = [data["map"][data["map_id"][i]].astype(bool) for i in range(n)]
-    sc = [tuple(c) for c in data["start_cell"]]
-    gc = [tuple(c) for c in data["goal_cell"]]
+    blocked, sc, gc = tmp64_queries(data)
+    n = len(blocked)
     grid = GridSpec()
     out = {}
     pool = Pool(20)
@@ -75,7 +60,7 @@ def main() -> None:
         hs, bs = [], []
         for begin in range(0, n, 128):
             idx = np.arange(begin, min(begin + 128, n))
-            h, b = heatmaps(model, data, idx, 1000 * args.seed + begin, PLAIN, 1)
+            h, b, _ = tmp64_heatmaps(model, data, idx, 1000 * args.seed + begin, PLAIN, 1)
             hs.append(h[:, 0].cpu().numpy())
             bs.append(b[:, 0].cpu().numpy())
         h, b = np.concatenate(hs), np.concatenate(bs)
@@ -142,13 +127,13 @@ def main() -> None:
                 )
                 for r, i in enumerate(ids[p : p + 3]):
                     for c, (nm, o) in enumerate(((ref, R), (mod, M))):
-                        draw(
+                        draw_search(
                             axes[r, c],
                             blocked[i],
                             sc[i],
                             gc[i],
                             o["h"][i],
-                            o["res"][i],
+                            *o["res"][i][4:],
                             f"#{i} {nm}  b*={o['b'][i]:.2f}  exp. red. {o['red'][i]:.0f}%  "
                             f"cost {o['cost'][i]:.3f}",
                         )

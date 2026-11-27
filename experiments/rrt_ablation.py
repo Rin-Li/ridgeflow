@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time
 from pathlib import Path
 
@@ -29,18 +28,12 @@ import numpy as np
 import torch
 from matplotlib.backends.backend_pdf import PdfPages
 
-sys.path.insert(0, str(Path(__file__).parent))
-from connectivity_eval import diversity  # noqa: E402
-from sampler_ablation import VARIANTS, sample  # noqa: E402
-from topology_report import base_axes  # noqa: E402  (registers the CJK font)
-from walker_eval import turning  # noqa: E402
+from experiments.common import base_axes, diversity, path_length, turning
+from ridgeflow import GridSpec, RidgeModel, RidgeWalker, sample_rect_world, stack
+from ridgeflow.planners.walker import WalkerConfig
+from ridgeflow.routes import ON_RIDGE, bottleneck, hedging, project
+from ridgeflow.training.gap import geodesic_mask
 
-from ridgeflow import GridSpec, RidgeModel, RidgeWalker, sample_rect_world, stack  # noqa: E402
-from ridgeflow.planners.walker import WalkerConfig  # noqa: E402
-from ridgeflow.routes import ON_RIDGE, bottleneck, hedging, project  # noqa: E402
-from ridgeflow.training.gap import geodesic_mask  # noqa: E402
-
-PLAIN = next(v for v in VARIANTS if v.name == "plain")
 SHOW = 6  # example worlds drawn per checkpoint
 
 
@@ -54,13 +47,12 @@ def evaluate(model, worlds, k, batch, walkers):
     for begin in range(0, len(worlds), batch):
         chunk = worlds[begin : begin + batch]
         occ, grids, starts, goals = stack(chunk, model.device)
-        si = torch.floor(starts / grid.cell).long()
-        gi = torch.floor(goals / grid.cell).long()
+        si, gi = grid.cells(starts), grid.cells(goals)
         masks = []
         for j in range(k):
             torch.cuda.synchronize()
             t0 = time.perf_counter()
-            h, _, _ = sample(model, occ, grids, starts, goals, begin + 10_000 * j, PLAIN)
+            h = model.sample(occ, starts, goals, begin + 10_000 * j)
             torch.cuda.synchronize()
             r["gen_s"] += time.perf_counter() - t0
             b = bottleneck(h, ~grids, si, gi)
@@ -85,7 +77,7 @@ def evaluate(model, worlds, k, batch, walkers):
                         ok = bool(ok) and w.path_free(p)
                         r[f"{tag}_{key}"].append(ok)
                         if ok and tag == "proj" and key == "dfs":
-                            r["len"].append(float(np.linalg.norm(np.diff(p, axis=0), axis=1).sum()))
+                            r["len"].append(path_length(p))
                             r["turn"].append(turning(p)[0])
                     if j == 0 and begin == 0 and tag == "proj" and key == "dfs":
                         for q in range(SHOW):

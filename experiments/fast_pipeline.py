@@ -1,10 +1,9 @@
-"""K candidate routes for one query, default vs fast pipeline (ridgeflow.fast).
+"""K candidate routes for one query: RidgeModel in fp32 against RidgeModel(fast=True).
 
-Pipeline: K draws in one batch -> L2 projection of each -> backtracking walker on each.
-Default = RidgeModel (fp32, eager) + RidgeWalker; fast = FastRidgeModel (bf16, torch.compile)
-+ FastRidgeWalker. Reports the per-stage latency of single queries for several K, and the
-quality of both over the benchmark worlds (projection keeps every draw connected; success =
-reached and collision-free). Writes a PDF.
+Pipeline: K draws in one batch -> L2 projection of each -> backtracking walker on each. The fast
+model runs the UNet in bf16 and the sampling loop under torch.compile. Reports the per-stage
+latency of single queries for several K, and the quality of both over the benchmark worlds
+(projection keeps every draw connected; success = reached and collision-free). Writes a PDF.
 """
 
 from __future__ import annotations
@@ -21,21 +20,19 @@ import numpy as np
 import torch
 from matplotlib.backends.backend_pdf import PdfPages
 
-from ridgeflow import GridSpec, RidgeModel, RidgeWalker, sample_rect_world, stack  # noqa: E402
-from ridgeflow.fast import FastRidgeModel, FastRidgeWalker  # noqa: E402
-from ridgeflow.routes import ON_RIDGE, bottleneck, project  # noqa: E402
+from experiments.common import RRT_CHECKPOINT, path_length
+from ridgeflow import GridSpec, RidgeModel, RidgeWalker, sample_rect_world, stack
+from ridgeflow.routes import ON_RIDGE, bottleneck, project
 
 
 def plan(model, walker, occ, grids, starts, goals, seed):
     """Returns paths, reached, raw connectivity and the stage times (ms)."""
-    cell = model.grid.cell
     torch.cuda.synchronize()
     t0 = time.perf_counter()
     h = model.sample(occ, starts, goals, seed)
     torch.cuda.synchronize()
     t1 = time.perf_counter()
-    si = torch.floor(starts / cell).long()
-    gi = torch.floor(goals / cell).long()
+    si, gi = model.grid.cells(starts), model.grid.cells(goals)
     hp, route = project(h, ~grids, si, gi)
     torch.cuda.synchronize()
     t2 = time.perf_counter()
@@ -47,7 +44,7 @@ def plan(model, walker, occ, grids, starts, goals, seed):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", default="outputs/runs/rrtc_full/best.pt")
+    parser.add_argument("--checkpoint", default=RRT_CHECKPOINT)
     parser.add_argument("--ks", default="1,4,8,16")
     parser.add_argument("--latency-queries", type=int, default=100)
     parser.add_argument("--queries", type=int, default=1000)
@@ -59,14 +56,11 @@ def main() -> None:
     grid = GridSpec()
     worlds = [sample_rect_world(np.random.default_rng(s), grid) for s in range(args.queries)]
     pipelines = {
-        "default (fp32 + old walker)": (RidgeModel(args.model, grid), RidgeWalker(grid)),
-        "fast (bf16 + compile + new walker)": (
-            FastRidgeModel(args.model, grid),
-            FastRidgeWalker(grid),
-        ),
+        "default (fp32)": (RidgeModel(args.checkpoint, grid), RidgeWalker(grid)),
+        "fast (bf16 + compile)": (RidgeModel(args.checkpoint, grid, fast=True), RidgeWalker(grid)),
     }
     t0 = time.perf_counter()
-    pipelines["fast (bf16 + compile + new walker)"][0].warmup(sorted({*ks, args.k * 50}))
+    pipelines["fast (bf16 + compile)"][0].warmup(sorted({*ks, args.k * 50}))
     print(f"compile warm-up {time.perf_counter() - t0:.0f} s", flush=True)
 
     latency = {}
@@ -97,7 +91,7 @@ def main() -> None:
                 good = bool(r) and chunk[i // args.k].path_free(p)
                 ok.append(good)
                 if good:
-                    lengths.append(float(np.linalg.norm(np.diff(p, axis=0), axis=1).sum()))
+                    lengths.append(path_length(p))
         quality[name] = (100 * np.mean(conn), 100 * np.mean(ok), float(np.mean(lengths)))
         print(name, np.round(quality[name], 3), flush=True)
 

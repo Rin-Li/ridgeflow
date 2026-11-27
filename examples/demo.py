@@ -1,4 +1,5 @@
 """Render the figures in the README."""
+
 from __future__ import annotations
 
 import argparse

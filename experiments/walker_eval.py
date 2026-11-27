@@ -12,7 +12,6 @@ Failure categories (walker never collides: every step is collision-checked):
 from __future__ import annotations
 
 import argparse
-import sys
 import time
 from pathlib import Path
 
@@ -24,15 +23,10 @@ import numpy as np
 import torch
 from matplotlib.backends.backend_pdf import PdfPages
 
-sys.path.insert(0, str(Path(__file__).parent))
-from sampler_ablation import VARIANTS, sample  # noqa: E402
-from topology_report import base_axes  # noqa: E402  (registers the CJK font)
-
-from ridgeflow import GridSpec, RidgeModel, RidgeWalker, sample_rect_world, stack  # noqa: E402
-from ridgeflow.planners.walker import WalkerConfig  # noqa: E402
-from ridgeflow.routes import project  # noqa: E402
-
-PLAIN = next(v for v in VARIANTS if v.name == "plain")
+from experiments.common import RRT_CHECKPOINT, base_axes, geodesic_paths, path_length, turning
+from ridgeflow import GridSpec, RidgeModel, RidgeWalker, sample_rect_world, stack
+from ridgeflow.planners.walker import WalkerConfig
+from ridgeflow.routes import project
 
 
 def classify(world, path, ok, max_steps):
@@ -46,17 +40,6 @@ def classify(world, path, ok, max_steps):
     return "stuck"
 
 
-def turning(path: np.ndarray) -> tuple[float, float]:
-    """Total and largest heading change (rad) along a polyline."""
-    d = np.diff(path, axis=0)
-    d = d[np.linalg.norm(d, axis=1) > 1e-6]
-    if len(d) < 2:
-        return 0.0, 0.0
-    a = np.arctan2(d[:, 1], d[:, 0])
-    t = np.abs((np.diff(a) + np.pi) % (2 * np.pi) - np.pi)
-    return float(t.sum()), float(t.max())
-
-
 class GeodesicReference:
     """Not a walker: the ridge geodesic's grid route, for comparing smoothness."""
 
@@ -66,24 +49,13 @@ class GeodesicReference:
 
     def walk(self, h, grids, starts, goals, route=None):
         from ridgeflow.planners.common import Result
-        from ridgeflow.routes import ridge_cost, route_paths
 
-        cell = self.grid.cell
-        si = torch.floor(starts / cell).long()
-        gi = torch.floor(goals / cell).long()
         paths, ok = [], []
-        for c, s_, g_ in zip(
-            route_paths(ridge_cost(h), ~grids, si, gi),
-            starts.cpu().numpy(),
-            goals.cpu().numpy(),
-            strict=True,
+        for p, s_ in zip(
+            geodesic_paths(h, grids, starts, goals, self.grid), starts.cpu().numpy(), strict=True
         ):
-            if c is None:
-                paths.append(s_[None])
-                ok.append(False)
-            else:
-                paths.append(np.concatenate([s_[None], (c[1:-1] + 0.5) * cell, g_[None]]))
-                ok.append(True)
+            paths.append(s_[None] if p is None else p)
+            ok.append(p is not None)
         return Result(paths=paths, reached=np.array(ok))
 
 
@@ -98,10 +70,9 @@ def run(walkers: dict, model, worlds, k, batch, projected: bool):
     for begin in range(0, len(worlds), batch):
         chunk = worlds[begin : begin + batch]
         occ, grids, starts, goals = stack(chunk, model.device)
-        si = torch.floor(starts / grid.cell).long()
-        gi = torch.floor(goals / grid.cell).long()
+        si, gi = grid.cells(starts), grid.cells(goals)
         for j in range(k):
-            h, _, _ = sample(model, occ, grids, starts, goals, begin + 10_000 * j, PLAIN)
+            h = model.sample(occ, starts, goals, begin + 10_000 * j)
             route = None
             if projected:  # = projecting the last step's x0_hat, which is the output
                 h, route = project(h, ~grids, si, gi)
@@ -121,9 +92,7 @@ def run(walkers: dict, model, worlds, k, batch, projected: bool):
                     cat = classify(w, p, ok, walker.config.max_steps)
                     rec[name]["cat"].append(cat)
                     if ok:
-                        rec[name]["len"].append(
-                            float(np.linalg.norm(np.diff(p, axis=0), axis=1).sum())
-                        )
+                        rec[name]["len"].append(path_length(p))
                         total, kink = turning(p)
                         rec[name]["turn"].append(total)
                         rec[name]["kink"].append(kink)
@@ -138,7 +107,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawTextHelpFormatter
     )
-    parser.add_argument("--checkpoint", default="checkpoints/ridgeflow_rrt64.pt")
+    parser.add_argument("--checkpoint", default=RRT_CHECKPOINT)
     parser.add_argument("--queries", type=int, default=1000)
     parser.add_argument("--batch", type=int, default=250)
     parser.add_argument("--k", type=int, default=2)
@@ -182,7 +151,7 @@ def main() -> None:
     worlds = [sample_rect_world(np.random.default_rng(s), grid) for s in range(args.queries)]
     occ, grids, starts, goals = stack(worlds[:4], model.device)
     for w in walkers.values():  # warm-up
-        w.walk(sample(model, occ, grids, starts, goals, 0, PLAIN)[0], grids, starts, goals)
+        w.walk(model.sample(occ, starts, goals, 0), grids, starts, goals)
     rec, keep = run(walkers, model, worlds, args.k, args.batch, not args.no_projection)
 
     n = len(worlds) * args.k
@@ -206,9 +175,8 @@ def main() -> None:
 
     # single-query latency: projection (when used) + walk
     occ, grids, starts, goals = stack(worlds[:1], model.device)
-    si = torch.floor(starts / grid.cell).long()
-    gi = torch.floor(goals / grid.cell).long()
-    h1 = sample(model, occ, grids, starts, goals, 0, PLAIN)[0]
+    si, gi = grid.cells(starts), grid.cells(goals)
+    h1 = model.sample(occ, starts, goals, 0)
     for name, w in walkers.items():
         ts = []
         for _ in range(20):
@@ -230,7 +198,7 @@ def main() -> None:
         lines = [
             f"{len(worlds)} benchmark maps × {args.k} noise seeds; heatmap = base-model sample + "
             f"{'no projection' if args.no_projection else 'last-step L2 projection'}; "
-            "success = reached the goal without touching padding.",
+            "success = reached the goal without touching an obstacle.",
             "Failure types: overshoot = got within 3px of the goal but never connected; stuck = "
             "every candidate in the forward cone blocked; "
             "lost = step budget exhausted (wandering after energy ran out). Patched = failures "

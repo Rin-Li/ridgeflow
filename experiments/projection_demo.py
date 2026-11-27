@@ -14,7 +14,6 @@ projected heatmap against the plain geometric shortest path).
 from __future__ import annotations
 
 import argparse
-import sys
 import time
 from pathlib import Path
 
@@ -27,12 +26,9 @@ import torch
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.colors import LogNorm
 
-sys.path.insert(0, str(Path(__file__).parent))
-from sampler_ablation import VARIANTS, sample  # noqa: E402
-from topology_report import base_axes  # noqa: E402  (registers the CJK font)
-
-from ridgeflow import GridSpec, RidgeModel, sample_rect_world, stack  # noqa: E402
-from ridgeflow.routes import (  # noqa: E402
+from experiments.common import RRT_CHECKPOINT, base_axes, path_length
+from ridgeflow import GridSpec, RidgeModel, sample_rect_world, stack
+from ridgeflow.routes import (
     ON_RIDGE,
     _open_endpoints,
     bottleneck,
@@ -42,9 +38,7 @@ from ridgeflow.routes import (  # noqa: E402
     projection_cost,
     route_paths,
 )
-from ridgeflow.search import astar  # noqa: E402
-
-PLAIN = next(v for v in VARIANTS if v.name == "plain")
+from ridgeflow.search import astar
 
 
 def bellman_ford_sweeps(cost, free, start):
@@ -62,10 +56,6 @@ def bellman_ford_sweeps(cost, free, start):
     return sweep
 
 
-def length(p):
-    return float(np.linalg.norm(np.diff(p, axis=0), axis=1).sum()) if p is not None else np.nan
-
-
 def timed(fn, reps=1):
     torch.cuda.synchronize()
     t0 = time.perf_counter()
@@ -77,14 +67,14 @@ def timed(fn, reps=1):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", default="outputs/runs/rrt_full/best.pt")
+    parser.add_argument("--checkpoint", default=RRT_CHECKPOINT)
     parser.add_argument("--queries", type=int, default=1000)
     parser.add_argument("--output", default="outputs/projection_demo.pdf")
     args = parser.parse_args()
 
     grid = GridSpec()
     cell = grid.cell
-    model = RidgeModel(args.model, grid)
+    model = RidgeModel(args.checkpoint, grid)
     worlds = [sample_rect_world(np.random.default_rng(s), grid) for s in range(args.queries)]
 
     # one draw per world, in the same batches as rrt_ablation (draw 0)
@@ -93,8 +83,8 @@ def main() -> None:
     for begin in range(0, len(worlds), 250):
         chunk = worlds[begin : begin + 250]
         occ, grids, starts, goals = stack(chunk, model.device)
-        si, gi = (torch.floor(x / cell).long() for x in (starts, goals))
-        dt, (h, _, _) = timed(lambda: sample(model, occ, grids, starts, goals, begin, PLAIN))  # noqa: B023
+        si, gi = model.grid.cells(starts), model.grid.cells(goals)
+        dt, h = timed(lambda: model.sample(occ, starts, goals, begin))  # noqa: B023
         t_gen += dt
         dt, (hp, route) = timed(lambda: project(h, ~grids, si, gi))  # noqa: B023
         t_proj += dt
@@ -109,30 +99,31 @@ def main() -> None:
     n = len(worlds)
     reach = np.array([q is not None for q in GEO])  # a few worlds have no route on the padded grid
     broken = (B < ON_RIDGE) & reach
-    ratio = np.array([length(p) / length(q) for p, q in zip(P, GEO, strict=True)])
+    ratio = np.array([path_length(p) / path_length(q) for p, q in zip(P, GEO, strict=True)])
 
     # timings: batch of 1 vs batch of 250, Bellman-Ford sweeps, and a CPU A* for comparison
     occ, grids, starts, goals = stack(worlds[:250], model.device)
-    si, gi = (torch.floor(x / cell).long() for x in (starts, goals))
+    m = len(grids)
+    si, gi = model.grid.cells(starts), model.grid.cells(goals)
     h = torch.from_numpy(H[:250]).to(model.device)
     project(h[:1], ~grids[:1], si[:1], gi[:1])  # warm up
     one = np.mean(
         [
             timed(lambda: project(h[i : i + 1], ~grids[i : i + 1], si[i : i + 1], gi[i : i + 1]))[0]  # noqa: B023
-            for i in range(50)
+            for i in range(min(50, m))
         ]
     )
-    many = timed(lambda: project(h, ~grids, si, gi), reps=5)[0] / 250
+    many = timed(lambda: project(h, ~grids, si, gi), reps=5)[0] / m
     sweeps = [
         bellman_ford_sweeps(projection_cost(h[i : i + 1]), ~grids[i : i + 1], si[i : i + 1])
-        for i in range(50)
+        for i in range(min(50, m))
     ]
     blocked = grids.cpu().numpy()
     sc, gc = si.cpu().numpy(), gi.cpu().numpy()
     t0 = time.perf_counter()
-    for i in range(250):
+    for i in range(m):
         astar(blocked[i], sc[i], gc[i])
-    t_astar = (time.perf_counter() - t0) / 250
+    t_astar = (time.perf_counter() - t0) / m
 
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -256,7 +247,7 @@ def main() -> None:
                 hp = np.where(ROUTE[q], np.maximum(h, ON_RIDGE), h)
                 lifted = ROUTE[q] & (h < ON_RIDGE)
                 occ1, grid1, s1, g1 = stack([w], model.device)
-                sv, gv = (torch.floor(x / cell).long() for x in (s1, g1))
+                sv, gv = model.grid.cells(s1), model.grid.cells(g1)
                 cost = projection_cost(torch.from_numpy(h)[None].to(model.device))
                 wts = edge_weights(cost.float(), _open_endpoints(~grid1, sv, gv))
                 ds, dg = distances(torch.cat([wts, wts]), torch.cat([sv, gv])).cpu().numpy()

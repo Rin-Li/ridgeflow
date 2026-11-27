@@ -14,7 +14,6 @@ Writes ``outputs/value_of_model.pdf``.
 from __future__ import annotations
 
 import argparse
-import sys
 from multiprocessing import Pool
 from pathlib import Path
 
@@ -27,42 +26,27 @@ import torch
 from matplotlib.backends.backend_pdf import PdfPages
 from scipy.ndimage import distance_transform_edt
 
-sys.path.insert(0, str(Path(__file__).parent))
-from connectivity_eval import diversity  # noqa: E402
-from sampler_ablation import VARIANTS, sample  # noqa: E402
-from topology_report import base_axes  # noqa: E402  (shared plotting helpers)
-
-from ridgeflow import GridSpec, RidgeModel, sample_rect_world, stack  # noqa: E402
-from ridgeflow.model.targets import path_heatmap, world_to_pixel  # noqa: E402
-from ridgeflow.routes import (  # noqa: E402
+from experiments.common import (
+    RRT_CHECKPOINT,
+    base_axes,
+    diversity,
+    geodesic_paths,
+    path_length,
+    turning,
+)
+from ridgeflow import GridSpec, RidgeModel, sample_rect_world, stack
+from ridgeflow.model.targets import path_heatmap, world_to_pixel
+from ridgeflow.routes import (
     ON_RIDGE,
-    bottleneck,
-    projection_cost,
+    project,
     ridge_cost,
     route_mask,
-    route_paths,
 )
-
-LAST = next(v for v in VARIANTS if v.name == "last")
-PLAIN = next(v for v in VARIANTS if v.name == "plain")
-
-
-def project(h, free, si, gi):
-    broken = bottleneck(h, free, si, gi) < ON_RIDGE
-    lifted = torch.zeros_like(h, dtype=torch.bool)
-    if bool(broken.any()):
-        rows = broken.nonzero()[:, 0]
-        lift = route_mask(projection_cost(h[rows]), free[rows], si[rows], gi[rows])
-        lifted[rows] = lift & (h[rows] < ON_RIDGE)
-        h = h.clone()
-        h[rows] = torch.where(lift, h[rows].clamp_min(ON_RIDGE), h[rows])
-    return h, lifted
 
 
 def path_stats(world, pts, clearance):
     """Length (world units), mean / min clearance (cells), total turning (rad)."""
-    seg = np.diff(pts, axis=0)
-    length = float(np.linalg.norm(seg, axis=1).sum())
+    length = path_length(pts)
     idx = np.clip(np.floor(pts / world.grid.cell).astype(int), 0, world.grid.size - 1)
     clr = clearance[idx[:, 0], idx[:, 1]]
     # smooth a little before measuring turning so grid zig-zags do not dominate
@@ -71,30 +55,11 @@ def path_stats(world, pts, clearance):
         sm = np.stack([np.convolve(pts[:, i], k, mode="valid") for i in range(2)], -1)
     else:
         sm = pts
-    d = np.diff(sm, axis=0)
-    d = d[np.linalg.norm(d, axis=1) > 1e-9]
-    ang = np.arctan2(d[:, 1], d[:, 0])
-    turn = (
-        float(np.abs((np.diff(ang) + np.pi) % (2 * np.pi) - np.pi).sum()) if len(ang) > 1 else 0.0
-    )
-    return length, float(clr.mean()), float(clr.min()), turn
-
-
-def decode(h, worlds, grids, starts, goals, cell):
-    si = torch.floor(starts / cell).long()
-    gi = torch.floor(goals / cell).long()
-    cells = route_paths(ridge_cost(h), ~grids, si, gi)
-    out = []
-    for _w, c, s_, g_ in zip(worlds, cells, starts.cpu().numpy(), goals.cpu().numpy(), strict=True):
-        if c is None:
-            out.append(None)
-            continue
-        out.append(np.concatenate([s_[None], (c[1:-1] + 0.5) * cell, g_[None]]))
-    return out
+    return length, float(clr.mean()), float(clr.min()), turning(sm)[0]
 
 
 def _rrt(args):
-    from make_dataset import RRTStar
+    from ridgeflow.planners import RRTStar
 
     torch.set_num_threads(1)
     seed, j = args
@@ -106,7 +71,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawTextHelpFormatter
     )
-    parser.add_argument("--checkpoint", default="checkpoints/ridgeflow_rrt64.pt")
+    parser.add_argument("--checkpoint", default=RRT_CHECKPOINT)
     parser.add_argument("--queries", type=int, default=1000)
     parser.add_argument("--batch", type=int, default=250)
     parser.add_argument("--k", type=int, default=2)
@@ -131,17 +96,17 @@ def main() -> None:
     for begin in range(0, len(worlds), args.batch):
         chunk = worlds[begin : begin + args.batch]
         occ, grids, starts, goals = stack(chunk, model.device)
-        si = torch.floor(starts / grid.cell).long()
-        gi = torch.floor(goals / grid.cell).long()
+        si, gi = grid.cells(starts), grid.cells(goals)
         masks = {m: [] for m in methods}
         for j in range(args.k):
             seed = begin + 10_000 * j
-            h_plain, _, _ = sample(model, occ, grids, starts, goals, seed, PLAIN)
-            h_model, lifted = project(h_plain, ~grids, si, gi)
+            h_plain = model.sample(occ, starts, goals, seed)
+            h_model, route = project(h_plain, ~grids, si, gi)
+            lifted = route & (h_plain < ON_RIDGE)
             # identical to the "last" variant: projection of the final x0_hat
             h_empty, _ = project(torch.zeros_like(h_plain), ~grids, si, gi)
             heat = {"empty": h_empty, "model": h_model, "model_plain": h_plain}
-            paths = {m: decode(h, chunk, grids, starts, goals, grid.cell) for m, h in heat.items()}
+            paths = {m: geodesic_paths(h, grids, starts, goals, grid) for m, h in heat.items()}
             paths["RRT*"] = rrt[j][begin : begin + len(chunk)]
             for m in methods:
                 for q, (w, p) in enumerate(zip(chunk, paths[m], strict=True)):
@@ -220,7 +185,7 @@ def main() -> None:
         )
         lines = [
             f"{len(worlds)} benchmark maps × {args.k} noise seeds; all decoded with the geodesic; "
-            "success = reached the goal without touching the 1px padding.",
+            "success = reached the goal without touching an obstacle.",
             "empty = all-zero heatmap + last-step L2 projection (equivalent to the free-space "
             "shortest path); model = sample + last-step L2 projection; "
             "model_plain = no projection; RRT* = planner used for the training demos.",
@@ -237,8 +202,15 @@ def main() -> None:
         ax.axis("off")
         tab = ax.table(
             cellText=rows,
-            colLabels=["method", "success rate", "path length", "mean clearance", "min clearance",
-                       "total turn", "diversity"],
+            colLabels=[
+                "method",
+                "success rate",
+                "path length",
+                "mean clearance",
+                "min clearance",
+                "total turn",
+                "diversity",
+            ],
             loc="upper center",
             cellLoc="center",
         )
