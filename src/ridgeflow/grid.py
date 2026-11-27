@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import torch
+
 
 @dataclass(frozen=True)
 class GridSpec:
@@ -16,3 +18,7 @@ class GridSpec:
 
     def index(self, world_xy) -> tuple[int, int]:
         return int(world_xy[0] // self.cell), int(world_xy[1] // self.cell)
+
+    def cells(self, world_xy: torch.Tensor) -> torch.Tensor:
+        """``(..., 2)`` world points -> the ``(..., 2)`` long indices of their cells."""
+        return torch.floor(world_xy / self.cell).long()

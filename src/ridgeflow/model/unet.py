@@ -125,9 +125,7 @@ class ConditionalUNet(nn.Module):
 
         self.ups = nn.ModuleList()
         for index, skip in enumerate(reversed(channels)):
-            self.ups.append(
-                UpBlock(current, skip, skip, time_emb_dim, index < len(channels) - 1)
-            )
+            self.ups.append(UpBlock(current, skip, skip, time_emb_dim, index < len(channels) - 1))
             current = skip
 
         self.final = nn.Sequential(

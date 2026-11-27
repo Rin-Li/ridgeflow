@@ -33,8 +33,13 @@ def _draw(ax, panel: Panel) -> None:
     ax.imshow(background, cmap="magma", origin="lower", extent=bounds, vmin=0.0, vmax=1.0)
     occupancy = world.occupancy().numpy().T
     ax.imshow(
-        np.ma.masked_where(~occupancy, occupancy), cmap="Greys", origin="lower",
-        extent=bounds, vmin=0.0, vmax=1.4, alpha=0.9,
+        np.ma.masked_where(~occupancy, occupancy),
+        cmap="Greys",
+        origin="lower",
+        extent=bounds,
+        vmin=0.0,
+        vmax=1.4,
+        alpha=0.9,
     )
     tracks = ((panel.walker, WALKER, "ridge walker", 5), (panel.dwa, DWA, "DWA", 4))
     for track, colour, label, z in tracks:
@@ -60,7 +65,7 @@ def figure(panels: list[Panel], output: str | Path, columns: int | None = None) 
     axes = np.atleast_1d(axes).ravel()
     for ax, panel in zip(axes, panels, strict=False):
         _draw(ax, panel)
-    for ax in axes[len(panels):]:
+    for ax in axes[len(panels) :]:
         ax.axis("off")
     handles, labels = axes[0].get_legend_handles_labels()
     if handles:

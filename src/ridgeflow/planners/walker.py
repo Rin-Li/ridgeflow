@@ -132,9 +132,7 @@ class RidgeWalker:
         )  # fmt: skip
         backtracks = None
         if config.backtrack:
-            trail, lengths, status, residual, backtracks = walk_batch_dfs(
-                *args, config.lost_floor
-            )
+            trail, lengths, status, residual, backtracks = walk_batch_dfs(*args, config.lost_floor)
         else:
             trail, lengths, status, residual = walk_batch(*args)
         paths = [((trail[b, :n] + 0.5) * cell).astype(np.float32) for b, n in enumerate(lengths)]
@@ -231,7 +229,10 @@ class RidgeWalker:
             paths[b] = np.concatenate([trail[:j], pulled]).astype(np.float32)
             reached[b] = repaired[b] = True
         return Result(
-            paths=paths, reached=reached, residual=result.residual, repaired=repaired,
+            paths=paths,
+            reached=reached,
+            residual=result.residual,
+            repaired=repaired,
             backtracks=result.backtracks,
         )
 
@@ -261,9 +262,7 @@ class RidgeWalker:
         if _use_numba(config.backend):
             return self._walk_numba(energy_map, grids, starts, goals)
         if config.backtrack:
-            warnings.warn(
-                "backtracking needs the numba backend; walking greedily", stacklevel=3
-            )
+            warnings.warn("backtracking needs the numba backend; walking greedily", stacklevel=3)
         residual = F.pad(energy_map, (radius, radius, radius, radius))
         status = torch.full((batch,), ACTIVE, device=device)
         lengths = torch.ones(batch, dtype=torch.long, device=device)

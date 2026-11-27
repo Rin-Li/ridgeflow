@@ -67,16 +67,21 @@ def u_trap(grid: GridSpec | None = None) -> World:
 
 def comb(grid: GridSpec | None = None) -> World:
     rects = [
-        _box(4.8, 1.2, 5.3, 6.8), _box(3.0, 1.2, 4.8, 1.7),
-        _box(3.0, 3.75, 4.8, 4.25), _box(3.0, 6.3, 4.8, 6.8),
+        _box(4.8, 1.2, 5.3, 6.8),
+        _box(3.0, 1.2, 4.8, 1.7),
+        _box(3.0, 3.75, 4.8, 4.25),
+        _box(3.0, 6.3, 4.8, 6.8),
     ]
     return World(rects, np.array([1.2, 3.0]), np.array([7.0, 3.0]), grid or GridSpec())
 
 
 def dead_end(grid: GridSpec | None = None) -> World:
     rects = [
-        _box(2.8, 4.8, 5.2, 5.3), _box(2.8, 2.6, 3.3, 4.8), _box(4.7, 2.6, 5.2, 4.8),
-        _box(1.0, 1.0, 2.2, 2.0), _box(6.0, 6.0, 7.2, 7.2),
+        _box(2.8, 4.8, 5.2, 5.3),
+        _box(2.8, 2.6, 3.3, 4.8),
+        _box(4.7, 2.6, 5.2, 4.8),
+        _box(1.0, 1.0, 2.2, 2.0),
+        _box(6.0, 6.0, 7.2, 7.2),
     ]
     return World(rects, np.array([4.0, 3.4]), np.array([4.0, 7.0]), grid or GridSpec())
 
