@@ -13,6 +13,8 @@ class Result:
     paths: list[np.ndarray]
     reached: np.ndarray
     residual: torch.Tensor | None = None
+    repaired: np.ndarray | None = None  # walker queries finished by the route repair
+    backtracks: np.ndarray | None = None  # how often each walk returned to a branch point
 
 
 def collect(trail: list[torch.Tensor], lengths: torch.Tensor) -> list[np.ndarray]:
