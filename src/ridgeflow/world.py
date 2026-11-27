@@ -28,23 +28,28 @@ class Rect:
 
 @dataclass
 class World:
-    """``occupancy`` is what the model sees; planners avoid it padded by ``padding_px``."""
+    """``occupancy`` is a conservative raster: a cell is blocked when any part of it overlaps
+    an obstacle, so every free cell lies wholly in free space and a path that stays in free
+    cells cannot touch an obstacle, with no padding needed. The model sees this raster and
+    planners avoid it (padded by ``padding_px``, 0 by default)."""
 
     rects: list[Rect]
     start: np.ndarray
     goal: np.ndarray
     grid: GridSpec = field(default_factory=GridSpec)
-    padding_px: int = 1
+    padding_px: int = 0
     _occupancy: torch.Tensor | None = field(default=None, repr=False, compare=False)
     _planning: torch.Tensor | None = field(default=None, repr=False, compare=False)
 
     def occupancy(self) -> torch.Tensor:
         if self._occupancy is None:
-            centres = (torch.arange(self.grid.size) + 0.5) * self.grid.cell
-            xx, yy = torch.meshgrid(centres, centres, indexing="ij")
+            low = torch.arange(self.grid.size, dtype=torch.float64) * self.grid.cell
+            high = low + self.grid.cell
             raster = torch.zeros(self.grid.size, self.grid.size, dtype=torch.bool)
-            for r in self.rects:
-                raster |= (xx >= r.x) & (xx <= r.x + r.width) & (yy >= r.y) & (yy <= r.y + r.height)
+            for r in self.rects:  # positive-area overlap; touching an edge does not block
+                xs = (low < r.x + r.width) & (high > r.x)
+                ys = (low < r.y + r.height) & (high > r.y)
+                raster |= xs[:, None] & ys[None, :]
             self._occupancy = raster
         return self._occupancy
 
@@ -65,11 +70,34 @@ class World:
         return bool(segments_blocked(self.planning_grid()[None], a, b, self.grid.cell)[0, 0])
 
     def path_free(self, path) -> bool:
+        """Free on the planning raster and, exactly, clear of every obstacle rectangle."""
         path = np.asarray(path, np.float64)
         if len(path) < 2:
             return len(path) == 1 and not self.blocked(path[0])
         pairs = zip(path[:-1], path[1:], strict=True)
-        return not any(self.segment_blocked(a, b) for a, b in pairs)
+        if any(self.segment_blocked(a, b) for a, b in pairs):
+            return False
+        return not any(_segments_hit_rect(path[:-1], path[1:], r) for r in self.rects)
+
+
+def _segments_hit_rect(a: np.ndarray, b: np.ndarray, r: Rect) -> bool:
+    """Does any segment a[i]-b[i] meet the closed rectangle ``r``? (Liang-Barsky clipping)"""
+    d = b - a
+    t0, t1 = np.zeros(len(a)), np.ones(len(a))
+    ok = np.ones(len(a), bool)
+    for p, q in (
+        (-d[:, 0], a[:, 0] - r.x),
+        (d[:, 0], r.x + r.width - a[:, 0]),
+        (-d[:, 1], a[:, 1] - r.y),
+        (d[:, 1], r.y + r.height - a[:, 1]),
+    ):
+        parallel = p == 0
+        ok &= ~(parallel & (q < 0))
+        with np.errstate(divide="ignore", invalid="ignore"):
+            t = np.where(parallel, 0.0, q / np.where(parallel, 1.0, p))
+        t0 = np.where(~parallel & (p < 0), np.maximum(t0, t), t0)
+        t1 = np.where(~parallel & (p > 0), np.minimum(t1, t), t1)
+    return bool((ok & (t0 <= t1)).any())
 
 
 def stack(worlds: list[World], device) -> tuple[torch.Tensor, ...]:

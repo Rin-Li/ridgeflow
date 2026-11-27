@@ -8,15 +8,39 @@ from ridgeflow.collision import blocked
 from ridgeflow.scenarios import connected
 
 
-def test_rasterisation_uses_cell_centres(grid: GridSpec) -> None:
-    world = World([Rect(0.0, 0.0, 0.1, 0.1)], np.array([4.0, 4.0]), np.array([5.0, 5.0]), grid)
-    assert world.occupancy().sum() == 1
-    assert world.occupancy()[0, 0]
+def test_rasterisation_is_conservative(grid: GridSpec) -> None:
+    # a box that covers no cell centre still blocks every cell it overlaps
+    c = grid.cell
+    world = World([Rect(0.9 * c, 0.9 * c, 0.2 * c, 0.2 * c)], np.array([4.0, 4.0]),
+                  np.array([5.0, 5.0]), grid)
+    assert world.occupancy().sum() == 4
+    assert world.occupancy()[:2, :2].all()
 
 
-def test_planning_grid_is_padded_by_one_cell(grid: GridSpec) -> None:
-    world = World([Rect(4.0, 4.0, 0.1, 0.1)], np.array([1.0, 1.0]), np.array([7.0, 7.0]), grid)
-    assert world.planning_grid().sum() == 9
+def test_touching_a_cell_edge_does_not_block_it(grid: GridSpec) -> None:
+    c = grid.cell
+    world = World([Rect(2 * c, 2 * c, 2 * c, 2 * c)], np.array([4.0, 4.0]), np.array([5.0, 5.0]),
+                  grid)
+    assert world.occupancy().sum() == 4
+
+
+def test_planning_grid_is_the_raster_unless_padded(grid: GridSpec) -> None:
+    rect = [Rect(4.0, 4.0, 0.1, 0.1)]
+    world = World(rect, np.array([1.0, 1.0]), np.array([7.0, 7.0]), grid)
+    assert world.planning_grid().sum() == 1
+    padded = World(rect, np.array([1.0, 1.0]), np.array([7.0, 7.0]), grid, padding_px=1)
+    assert padded.planning_grid().sum() == 9
+
+
+def test_free_cells_never_touch_an_obstacle(grid: GridSpec) -> None:
+    for seed in range(5):
+        world = sample_rect_world(np.random.default_rng(seed), grid)
+        free = np.argwhere(~world.occupancy().numpy())
+        corners = (free[:, None] + np.array([[0, 0], [1, 0], [0, 1], [1, 1]])) * grid.cell
+        for r in world.rects:
+            inside = ((corners[..., 0] > r.x) & (corners[..., 0] < r.x + r.width)
+                      & (corners[..., 1] > r.y) & (corners[..., 1] < r.y + r.height))
+            assert not inside.any()
 
 
 def test_outside_the_grid_is_blocked(grid: GridSpec) -> None:
@@ -40,6 +64,7 @@ def test_path_free_checks_every_segment(grid: GridSpec) -> None:
     world = World([Rect(3.5, 0.0, 1.0, 8.0)], np.array([1.0, 4.0]), np.array([7.0, 4.0]), grid)
     assert not world.path_free([world.start, world.goal])
     assert world.path_free([[1.0, 1.0], [3.0, 1.0]])
+    assert not world.path_free([[1.0, 1.0], [3.5, 1.0]])  # ends on the box edge
     assert not connected(world)
 
 
